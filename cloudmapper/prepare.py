@@ -36,7 +36,7 @@ def query_aws(account, query, region=None):
         file_name = "{}/{}.json".format(account.name, query)
     else:
         file_name = "{}/{}/{}.json".format(account.name, region.name, query)
-    if os.path.isfile(file_name): 
+    if os.path.isfile(file_name):
         return json.load(open(file_name))
     else:
         return {}
@@ -60,6 +60,10 @@ def get_vpcs(region, outputfilter):
         vpc_filter += " | select (.VpcId | contains({}))".format(outputfilter["vpc-ids"])
     if "vpc-names" in outputfilter:
         vpc_filter += ' | select(.Tags != null) | select (.Tags[] | (.Key == "Name") and (.Value | contains({})))'.format(outputfilter["vpc-names"])
+    # if "stack-names" in outputfilter:
+    #     print("filter stacks")
+    #     vpc_filter += ' | select(.Tags != null) | select (.Tags[] | (.Key == "aws:cloudformation:stack-name") and (.Value | contains({})))'.format(outputfilter["stack-names"])
+
     vpcs = query_aws(region.account, "describe-vpcs", region)
     return pyjq.all('.Vpcs[]{}'.format(vpc_filter), vpcs)
 
@@ -76,47 +80,67 @@ def get_vpc_peerings(region):
     return pyjq.all(resource_filter, vpc_peerings)
 
 
-def get_subnets(az):
+def get_subnets(az, outputfilter):
     subnets = query_aws(az.account, "describe-subnets", az.region)
-    resource_filter = '.Subnets[] | select(.VpcId == "{}") | select(.AvailabilityZone == "{}")'
-    return pyjq.all(resource_filter.format(az.vpc.local_id, az.local_id), subnets)
+    resource_filter = '.Subnets[] | select(.VpcId == "{}") | select(.AvailabilityZone == "{}")'.format(az.vpc.local_id, az.local_id)
+    # if "stack-names" in outputfilter:
+    #     print("filter stacks")
+    #     resource_filter += ' | select(.Tags != null) | select (.Tags[] | (.Key == "aws:cloudformation:stack-name") and (.Value | contains({})))'.format(outputfilter["stack-names"])
+
+    return pyjq.all(resource_filter, subnets)
 
 
-def get_ec2s(subnet):
+def get_ec2s(subnet, outputfilter):
     instances = query_aws(subnet.account, "describe-instances", subnet.region)
-    resource_filter = '.Reservations[].Instances[] | select(.SubnetId == "{}") | select(.State.Name == "running")'
-    return pyjq.all(resource_filter.format(subnet.local_id), instances)
+    resource_filter = '.Reservations[].Instances[] | select(.SubnetId == "{}") | select(.State.Name == "running")'.format(subnet.local_id)
+    if "stack-names" in outputfilter:
+        resource_filter += ' | select(.Tags != null) | select (.Tags[] | (.Key == "aws:cloudformation:stack-name") and (.Value | contains({})))'.format(outputfilter["stack-names"])
+
+    return pyjq.all(resource_filter, instances)
 
 
-def get_elbs(subnet):
+def get_elbs(subnet, outputfilter):
     # ELBs
     elb_instances = query_aws(subnet.account, "describe-load-balancers", subnet.region)
     elb_resource_filter = '.LoadBalancerDescriptions[] | select(.VPCId == "{}") | select(.Subnets[] == "{}")'
+    if "dns-names" in outputfilter:
+        elb_resource_filter += ' | select(.DNSName | contains({}))'.format(outputfilter["dns-names"])
     elbs = pyjq.all(elb_resource_filter.format(subnet.vpc.local_id, subnet.local_id), elb_instances)
 
     # ALBs and NLBs
     alb_instances = query_aws(subnet.account, "describe-load-balancers-v2", subnet.region)
     alb_resource_filter = '.LoadBalancers[] | select(.VPCId == "{}") | select(.Subnets[] == "{}")'
+    if "dns-names" in outputfilter:
+        alb_resource_filter += ' | select(.DNSName | contains({}))'.format(outputfilter["dns-names"])
     albs = pyjq.all(alb_resource_filter.format(subnet.vpc.local_id, subnet.local_id), alb_instances)
 
     return elbs + albs
 
 
-def get_albs_and_nlbs(subnet):
+def get_albs_and_nlbs(subnet, outputfilter):
     instances = query_aws(subnet.account, "describe-load-balancers-v2", subnet.region)
     resource_filter = '.LoadBalancers[] | select(.VpcId == "{}") | select(.AvailabilityZones[].SubnetId == "{}")'
+    if "dns-names" in outputfilter:
+        resource_filter += ' | select(.DNSName | contains({}))'.format(outputfilter["dns-names"])
     return pyjq.all(resource_filter.format(subnet.vpc.local_id, subnet.local_id), instances)
 
 
-def get_rds_instances(subnet):
+def get_rds_instances(subnet, outputfilter):
     instances = query_aws(subnet.account, "describe-db-instances", subnet.region)
     resource_filter = '.DBInstances[] | select(.DBSubnetGroup.Subnets[].SubnetIdentifier  == "{}")'
+    if "db-user-names" in outputfilter:
+        resource_filter += ' | select(.MasterUsername | contains({}))'.format(outputfilter["db-user-names"])
+
     return pyjq.all(resource_filter.format(subnet.local_id), instances)
 
 
-def get_sgs(vpc):
+def get_sgs(vpc, outputfilter):
     sgs = query_aws(vpc.account, "describe-security-groups", vpc.region)
-    return pyjq.all('.SecurityGroups[] | select(.VpcId == "{}")'.format(vpc.local_id), sgs)
+    resource_filter = '.SecurityGroups[] | select(.VpcId == "{}")'.format(vpc.local_id)
+    if "stack-names" in outputfilter:
+        resource_filter += ' | select(.Tags != null) | select (.Tags[] | (.Key == "aws:cloudformation:stack-name") and (.Value | contains({})))'.format(outputfilter["stack-names"])
+
+    return pyjq.all(resource_filter, sgs)
 
 
 def is_external_cidr(cidr):
@@ -130,12 +154,12 @@ def is_external_cidr(cidr):
     return True
 
 
-def get_external_cidrs(account, config):
+def get_external_cidrs(account, config, outputfilter):
     external_cidrs = []
     unique_cidrs = {}
     for region in account.children:
         for vpc in region.children:
-            sgs = get_sgs(vpc)
+            sgs = get_sgs(vpc, outputfilter)
 
             # Get external IPs
             for sg in sgs:
@@ -177,7 +201,7 @@ def get_connections(cidrs, vpc, outputfilter):
 
     # For each security group, find all the instances that are allowed to connect to instances
     # within that group.
-    for sg in get_sgs(vpc):
+    for sg in get_sgs(vpc, outputfilter):
         # Get the CIDRs that are allowed to connect
         for cidr in pyjq.all('.IpPermissions[].IpRanges[].CidrIp', sg):
             if not is_external_cidr(cidr):
@@ -250,7 +274,7 @@ def build_data_structure(account_data, config, outputfilter):
                 # so I make VPC a higher level construct
                 az = Az(vpc, az_json)
 
-                for subnet_json in get_subnets(az):
+                for subnet_json in get_subnets(az, outputfilter):
                     # If we ignore AZz, then tie the subnets up the VPC as the parent
                     if outputfilter["azs"]:
                         parent = az
@@ -260,24 +284,24 @@ def build_data_structure(account_data, config, outputfilter):
                     subnet = Subnet(parent, subnet_json)
 
                     # Get EC2's
-                    for ec2_json in get_ec2s(subnet):
+                    for ec2_json in get_ec2s(subnet, outputfilter):
                         ec2 = Ec2(subnet, ec2_json, outputfilter["collapse_by_tag"])
                         subnet.addChild(ec2)
 
                     # Get RDS's
-                    for rds_json in get_rds_instances(subnet):
+                    for rds_json in get_rds_instances(subnet, outputfilter):
                         rds = Rds(subnet, rds_json)
                         if not outputfilter["read_replicas"] and rds.node_type == "rds_rr":
                             continue
                         subnet.addChild(rds)
 
                     # Get ELB's
-                    for elb_json in get_elbs(subnet):
+                    for elb_json in get_elbs(subnet, outputfilter):
                         elb = Elb(subnet, elb_json)
                         subnet.addChild(elb)
 
                     # Get ALB's and NLB's
-                    for alb_json in get_albs_and_nlbs(subnet):
+                    for alb_json in get_albs_and_nlbs(subnet, outputfilter):
                         alb = Elb(subnet, alb_json)
                         subnet.addChild(alb)
 
@@ -324,7 +348,7 @@ def build_data_structure(account_data, config, outputfilter):
 
     # Get external cidr nodes
     cidrs = {}
-    for cidr in get_external_cidrs(account, config):
+    for cidr in get_external_cidrs(account, config, outputfilter):
         cidrs[cidr.arn] = cidr
 
     # Find connections between nodes

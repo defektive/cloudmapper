@@ -114,6 +114,12 @@ def run_prepare(arguments):
                         default=None, type=str)
     parser.add_argument("--vpc-names", help="VPC names to restrict to (ex. prod,dev)",
                         default=None, type=str)
+    parser.add_argument("--stack-names", help="Stack names to restrict to (ex. prod,dev)",
+                        default=None, type=str)
+    parser.add_argument("--dns-names", help="domain names to restrict to (ex. prod,dev)",
+                        default=None, type=str)
+    parser.add_argument("--db-user-names", help="db names to restrict to (ex. prod,dev)",
+                        default=None, type=str)
     parser.add_argument("--internal-edges", help="Show all connections (default)",
                         dest='internal_edges', action='store_true')
     parser.add_argument("--no-internal-edges", help="Only show connections to external CIDRs",
@@ -149,7 +155,16 @@ def run_prepare(arguments):
         outputfilter["vpc-ids"] = ','.join(['"' + r + '"' for r in args.vpc_ids.split(',')])
     if args.vpc_names:
         outputfilter["vpc-names"] = ','.join(['"' + r + '"' for r in args.vpc_names.split(',')])
-    
+    if args.stack_names:
+        outputfilter["stack-names"] = ','.join(['"' + r + '"' for r in args.stack_names.split(',')])
+        print(outputfilter["stack-names"])
+    if args.dns_names:
+        outputfilter["dns-names"] = ','.join(['"' + r + '"' for r in args.dns_names.split(',')])
+        print(outputfilter["dns-names"])
+    if args.db_user_names:
+        outputfilter["db-user-names"] = ','.join(['"' + r + '"' for r in args.db_user_names.split(',')])
+        print(outputfilter["db-user-names"])
+
     outputfilter["internal_edges"] = args.internal_edges
     outputfilter["read_replicas"] = args.read_replicas
     outputfilter["inter_rds_edges"] = args.inter_rds_edges
